@@ -1,0 +1,27 @@
+{
+	"$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
+	"id": "svt-neo",
+	"name": "svt-neo",
+	"shortname": "svt-neo",
+	"description": "SVT Neo URL Mapper",
+	"version": "0.0.0",
+	"license": "MIT",
+	"repository": "git+https://github.com/bitfocus/companion-module-svt-neo.git",
+	"bugs": "https://github.com/bitfocus/companion-module-svt-neo/issues",
+	"maintainers": [
+		{
+			"name": "William Viker",
+			"email": "william@bitfocus.io"
+		}
+	],
+	"runtime": {
+		"type": "node22",
+		"api": "nodejs-ipc",
+		"apiVersion": "0.0.0",
+		"entrypoint": "../dist/main.js"
+	},
+	"legacyIds": [],
+	"manufacturer": "SVT",
+	"products": ["Neo"],
+	"keywords": []
+}
