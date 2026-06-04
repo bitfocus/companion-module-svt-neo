@@ -1,6 +1,7 @@
 import type { ModuleInstance } from './main.js'
 import {
 	novaWindowLoadNeocom,
+	vindralGetChannels,
 	windowCreate,
 	windowDelete,
 	windowLoadUrl,
@@ -272,6 +273,22 @@ export function UpdateActions(self: ModuleInstance): void {
 				const window = Number(event.options.window)
 				const url = String(event.options.url ?? '')
 				await windowLoadUrl(self, service, nppIndex, window, url)
+			},
+		},
+		vindral_get_channels: {
+			name: 'Vindral: Get Channels',
+			options: [
+				{
+					id: 'take',
+					type: 'number',
+					label: 'Take (max channels)',
+					default: 300,
+					min: 1,
+					max: 100000,
+				},
+			],
+			callback: async (event) => {
+				await vindralGetChannels(self, Number(event.options.take))
 			},
 		},
 		...buildComposerActions(self, npChoicesSafe, npDefault),

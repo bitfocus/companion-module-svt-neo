@@ -6,6 +6,7 @@ export interface ModuleConfig {
 	npCount: number
 	vindral_min_buffer: number
 	vindral_max_buffer: number
+	vindral_api_base: string
 	composer_port: number
 	rtmp_base_primary: string
 	rtmp_base_backup: string
@@ -179,6 +180,14 @@ export function GetConfigFields(config?: ModuleConfig): SomeCompanionConfigField
 			label: ``,
 			value: `**Vindral Configuration**`,
 			width: 12,
+		},
+
+		{
+			id: 'vindral_api_base',
+			type: 'textinput',
+			label: 'Vindral API Base URL',
+			width: 12,
+			default: 'https://api.vindral.svt.se/v1/',
 		},
 
 		{

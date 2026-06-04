@@ -55,6 +55,7 @@ export interface GeneralConfig {
 	novaBaseUrl: string
 	vindralMinBuffer: number | ''
 	vindralMaxBuffer: number | ''
+	vindralApiBase: string
 	composerPort: number | ''
 	rtmpBasePrimary: string
 	rtmpBaseBackup: string
@@ -115,6 +116,7 @@ export function buildModel(rawConfig: ModuleConfig | undefined): NeoModel {
 		novaBaseUrl,
 		vindralMinBuffer: num(config, 'vindral_min_buffer'),
 		vindralMaxBuffer: num(config, 'vindral_max_buffer'),
+		vindralApiBase: str(config, 'vindral_api_base'),
 		composerPort,
 		rtmpBasePrimary: str(config, 'rtmp_base_primary'),
 		rtmpBaseBackup: str(config, 'rtmp_base_backup'),

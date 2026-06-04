@@ -377,3 +377,19 @@ export async function windowLoadUrl(
 	self.log('debug', `${context}: NPP ${nppIndex} window ${windowIndex} loading ${loadUrl}`)
 	await performRequest(self, context, { method: 'POST', url, headers: authHeaders(self), json: body })
 }
+
+// Vindral Get Channels: GET <vindral api base>channels?take=<take>. Read-only call against the
+// public Vindral API; the response body is logged at debug level (parsing into variables can be
+// layered on later).
+export async function vindralGetChannels(self: ModuleInstance, take: number): Promise<void> {
+	const context = 'Vindral Get Channels'
+	const base = self.getModel().general.vindralApiBase
+
+	if (!base) {
+		self.log('warn', `${context}: no Vindral API base URL configured`)
+		return
+	}
+
+	const url = joinUrl(withScheme(base), `channels?take=${take}`)
+	await performRequest(self, context, { method: 'GET', url })
+}

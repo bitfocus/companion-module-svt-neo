@@ -12,6 +12,7 @@ const INPUT_CHOICES: DropdownChoice[] = [
 	{ id: 'in6', label: 'IN6' },
 	{ id: 'vs1', label: 'VS1' },
 	{ id: 'vs2', label: 'VS2' },
+	{ id: 'fs1', label: 'FS1 (Fullscreen)' },
 ]
 
 const ON_OFF_CHOICES: DropdownChoice[] = [
@@ -24,15 +25,10 @@ const UP_DOWN_CHOICES: DropdownChoice[] = [
 	{ id: 'down', label: 'Down' },
 ]
 
-const AUDIO_DELAY_CHOICES: DropdownChoice[] = [
-	{ id: 'off', label: 'Off' },
-	{ id: '1500', label: '1500 ms' },
-	{ id: '2000', label: '2000 ms' },
-	{ id: '2500', label: '2500 ms' },
-	{ id: '3000', label: '3000 ms' },
-	{ id: '3500', label: '3500 ms' },
-	{ id: '4000', label: '4000 ms' },
-]
+// Default external graphics-template URL for the second CG channel (cg2url). The `results` and
+// `action` query parameters are appended by the action callback.
+const CG2_DEFAULT_TEMPLATE_URL =
+	'https://applications.svt.se/duo-engage-graphics-templates/algvandringen/audience-poll/index.html?projectid=e8fc9992-d9a6-463f-9771-ce9e3ca0d2d2'
 
 // NP selector as a number input. Enter the NP number directly: 1 means NP01, 2 means NP02, etc.
 // (not zero-padded).
@@ -202,6 +198,18 @@ function buildComposerActionSet(
 				await composerTrigger(self, Number(event.options.np), name, undefined, 'Composer Keyer')
 			},
 		},
+		composer_keyer_toggle: {
+			name: 'Composer: Keyer On/Off',
+			options: [
+				np(),
+				{ id: 'keyer', type: 'number', label: 'Keyer number', default: 1, min: 1, max: 99 },
+				{ id: 'state', type: 'dropdown', label: 'State', default: 'on', choices: ON_OFF_CHOICES },
+			],
+			callback: async (event) => {
+				const name = `key${Number(event.options.keyer)}${String(event.options.state)}`
+				await composerTrigger(self, Number(event.options.np), name, undefined, 'Composer Keyer On/Off')
+			},
+		},
 		composer_kom: {
 			name: 'Composer: Kom',
 			options: [
@@ -211,18 +219,6 @@ function buildComposerActionSet(
 			callback: async (event) => {
 				const name = event.options.direction === 'down' ? 'komDown' : 'komUp'
 				await composerTrigger(self, Number(event.options.np), name, undefined, 'Composer Kom')
-			},
-		},
-		composer_kom_audio_delay: {
-			name: 'Composer: Kom Audio Delay',
-			options: [
-				np(),
-				{ id: 'delay', type: 'dropdown', label: 'Audio delay', default: 'off', choices: AUDIO_DELAY_CHOICES },
-			],
-			callback: async (event) => {
-				const value = String(event.options.delay)
-				const name = value === 'off' ? 'kom1-2-audiodelay-off' : `kom1-2-audiodelay-${value}ms`
-				await composerTrigger(self, Number(event.options.np), name, undefined, 'Composer Kom Audio Delay')
 			},
 		},
 		composer_delay: {
@@ -237,14 +233,32 @@ function buildComposerActionSet(
 					choices: [
 						{ id: 'on', label: 'On' },
 						{ id: 'off', label: 'Off' },
-						{ id: 'start', label: 'Start' },
-						{ id: 'stop', label: 'Stop' },
 					],
 				},
 			],
 			callback: async (event) => {
 				const name = `delay${String(event.options.state)}`
 				await composerTrigger(self, Number(event.options.np), name, undefined, 'Composer Delay')
+			},
+		},
+		composer_lufs: {
+			name: 'Composer: LUFS Start/Stop',
+			options: [
+				np(),
+				{
+					id: 'action',
+					type: 'dropdown',
+					label: 'Action',
+					default: 'start',
+					choices: [
+						{ id: 'start', label: 'Start' },
+						{ id: 'stop', label: 'Stop' },
+					],
+				},
+			],
+			callback: async (event) => {
+				const fn = event.options.action === 'stop' ? 'stopLufs' : 'startLufs'
+				await composerScript(self, Number(event.options.np), fn, undefined, 'Composer LUFS')
 			},
 		},
 		composer_pip_input: {
@@ -276,8 +290,7 @@ function buildComposerActionSet(
 					default: 'PIP',
 					choices: [
 						{ id: 'PIP', label: 'PIP' },
-						{ id: 'PIP-2', label: 'PIP-2' },
-						{ id: 'PIP-3', label: 'PIP-3' },
+						{ id: 'PIP2', label: 'PIP2' },
 					],
 				},
 			],
@@ -288,6 +301,65 @@ function buildComposerActionSet(
 					'pip-select',
 					{ input: String(event.options.pip) },
 					'Composer PIP Select',
+				)
+			},
+		},
+		composer_set_pip_source: {
+			name: 'Composer: Set PIP Source',
+			options: [
+				np(),
+				{ id: 'pip', type: 'number', label: 'PIP slot', default: 1, min: 1, max: 7 },
+				{ id: 'source', type: 'textinput', label: 'Source', default: '' },
+			],
+			callback: async (event) => {
+				const pip = Number(event.options.pip)
+				const source = String(event.options.source ?? '')
+				const parameter = `scene=pip&pip=pip${pip}&source=${source}`
+				await composerScript(self, Number(event.options.np), 'setPipSource', parameter, 'Composer Set PIP Source')
+			},
+		},
+		composer_set_pip_position: {
+			name: 'Composer: Set PIP Position',
+			options: [
+				np(),
+				{ id: 'pip', type: 'number', label: 'PIP slot', default: 1, min: 1, max: 7 },
+				{ id: 'x', type: 'number', label: 'X', default: 0, min: -100000, max: 100000 },
+				{ id: 'y', type: 'number', label: 'Y', default: 0, min: -100000, max: 100000 },
+			],
+			callback: async (event) => {
+				const pip = Number(event.options.pip)
+				const x = Number(event.options.x)
+				const y = Number(event.options.y)
+				const parameter = `pip=pip${pip}&scene=pip&x=${x}&y=${y}`
+				await composerScript(self, Number(event.options.np), 'setPipPosition', parameter, 'Composer Set PIP Position')
+			},
+		},
+		composer_set_pip_visible: {
+			name: 'Composer: Set PIP Visible',
+			options: [
+				np(),
+				{ id: 'pip', type: 'number', label: 'PIP slot', default: 1, min: 1, max: 7 },
+				{
+					id: 'visible',
+					type: 'dropdown',
+					label: 'Visible',
+					default: 'true',
+					choices: [
+						{ id: 'true', label: 'Visible' },
+						{ id: 'false', label: 'Hidden' },
+					],
+				},
+			],
+			callback: async (event) => {
+				const pip = Number(event.options.pip)
+				const visible = String(event.options.visible)
+				const parameter = `pip=pip${pip}&scene=pip&visible=${visible}`
+				await composerScript(
+					self,
+					Number(event.options.np),
+					'setPipSourceVisible',
+					parameter,
+					'Composer Set PIP Visible',
 				)
 			},
 		},
@@ -413,6 +485,44 @@ function buildComposerActionSet(
 				}
 				const cgUrl = `http://${model.general.cgHost}:${unit.cgPort}/?c=1`
 				await composerTrigger(self, npIndex, 'cgurl', { url: cgUrl }, 'Composer CG URL')
+			},
+		},
+		composer_cg2_url: {
+			name: 'Composer: CG2 URL (graphics template)',
+			options: [
+				np(),
+				{
+					id: 'url',
+					type: 'textinput',
+					label: 'Template URL (without results/action)',
+					default: CG2_DEFAULT_TEMPLATE_URL,
+				},
+				{
+					id: 'results',
+					type: 'dropdown',
+					label: 'Results',
+					default: 'false',
+					choices: [
+						{ id: 'true', label: 'True' },
+						{ id: 'false', label: 'False' },
+					],
+				},
+				{
+					id: 'action',
+					type: 'dropdown',
+					label: 'Action',
+					default: 'play',
+					choices: [
+						{ id: 'play', label: 'Play' },
+						{ id: 'stop', label: 'Stop' },
+					],
+				},
+			],
+			callback: async (event) => {
+				const base = String(event.options.url ?? '')
+				const separator = base.includes('?') ? '&' : '?'
+				const url = `${base}${separator}results=${String(event.options.results)}&action=${String(event.options.action)}`
+				await composerTrigger(self, Number(event.options.np), 'cg2url', { url }, 'Composer CG2 URL')
 			},
 		},
 		composer_init_production: {
