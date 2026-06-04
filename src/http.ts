@@ -1,10 +1,114 @@
-import got from 'got'
+import got, { HTTPError, TimeoutError, RequestError, type Method, type Response } from 'got'
 import type { ModuleInstance } from './main.js'
+
+// Hard ceiling on how long any single HTTP request may take. Waiting longer than this during a
+// live transmission is a liability, so we fail fast instead of blocking.
+const REQUEST_TIMEOUT_MS = 5000
 
 // Build the auth headers for the NOVA/Wingo API from the user-configured bearer token.
 function authHeaders(self: ModuleInstance): Record<string, string> {
 	const token = self.getModel().general.wingoToken
 	return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+// Never write secrets to the log: replace the Authorization value with a masked placeholder
+// that still reveals the scheme and whether a token was actually present.
+function redactHeaders(headers: Record<string, string>): Record<string, string> {
+	const out: Record<string, string> = { ...headers }
+	if (out.Authorization) {
+		const [scheme] = out.Authorization.split(' ')
+		out.Authorization = `${scheme} ***redacted***`
+	}
+	return out
+}
+
+// Keep response/body log lines from flooding the log; bodies are usually small but can be large.
+function truncate(text: string, max = 2000): string {
+	return text.length > max ? `${text.slice(0, max)}… (${text.length} bytes total)` : text
+}
+
+interface RequestSpec {
+	method: Extract<Method, 'GET' | 'POST' | 'DELETE'>
+	url: string
+	headers?: Record<string, string>
+	json?: unknown
+}
+
+// Single choke-point for every outgoing HTTP request so that all calls are logged the same way,
+// using the Companion log API at the appropriate levels:
+//   - debug: the full request line, redacted headers, request body, redirects, and the response body
+//   - info:  a one-line success summary (method, url, status, elapsed time)
+//   - error: HTTP error statuses, timeouts (>5s), and network/connection failures with their error codes
+// Returns the response on success, or null on any failure (callers stay fire-and-forget).
+async function performRequest(
+	self: ModuleInstance,
+	context: string,
+	spec: RequestSpec,
+): Promise<Response<string> | null> {
+	const { method, url, headers = {}, json } = spec
+
+	self.log('debug', `${context}: → ${method} ${url}`)
+	if (Object.keys(headers).length > 0) {
+		self.log('debug', `${context}: → headers ${JSON.stringify(redactHeaders(headers))}`)
+	}
+	if (json !== undefined) {
+		self.log('debug', `${context}: → body ${truncate(JSON.stringify(json))}`)
+	}
+
+	const startedAt = Date.now()
+	try {
+		const response = await got(url, {
+			method,
+			headers,
+			json,
+			responseType: 'text',
+			throwHttpErrors: true,
+			// Live-transmission safety: never block longer than 5s on a single request.
+			timeout: { request: REQUEST_TIMEOUT_MS },
+			// No retries, ever. A failed request is dead — retrying could fire a stale command
+			// seconds later (mid-transmission) and stack extra waits. One attempt only.
+			retry: { limit: 0 },
+			hooks: {
+				beforeRedirect: [
+					(updatedOptions, plainResponse) => {
+						self.log(
+							'debug',
+							`${context}: ↪ redirected to ${String(updatedOptions.url)} (HTTP ${plainResponse.statusCode})`,
+						)
+					},
+				],
+			},
+		})
+
+		const elapsed = Date.now() - startedAt
+		self.log(
+			'info',
+			`${context}: ✓ ${method} ${url} → ${response.statusCode} ${response.statusMessage ?? ''} (${elapsed}ms)`,
+		)
+		if (response.body) {
+			self.log('debug', `${context}: ← body ${truncate(response.body)}`)
+		}
+		return response
+	} catch (err) {
+		const elapsed = Date.now() - startedAt
+
+		if (err instanceof HTTPError) {
+			const { statusCode, statusMessage, body } = err.response
+			self.log('error', `${context}: ✗ ${method} ${url} → HTTP ${statusCode} ${statusMessage ?? ''} (${elapsed}ms)`)
+			const bodyText = typeof body === 'string' ? body : JSON.stringify(body)
+			if (bodyText) self.log('error', `${context}: ← error body ${truncate(bodyText)}`)
+		} else if (err instanceof TimeoutError) {
+			self.log('error', `${context}: ✗ ${method} ${url} timed out on "${err.event}" after ${elapsed}ms`)
+		} else if (err instanceof RequestError) {
+			self.log('error', `${context}: ✗ ${method} ${url} failed after ${elapsed}ms: ${err.code} ${err.message}`)
+		} else {
+			self.log(
+				'error',
+				`${context}: ✗ ${method} ${url} failed after ${elapsed}ms: ${err instanceof Error ? err.message : String(err)}`,
+			)
+		}
+		return null
+	}
 }
 
 // Ensure the resolved endpoint (host:port/baseurl) has an http scheme so `got` accepts it.
@@ -78,14 +182,8 @@ function buildQuerySuffix(params?: Record<string, string | number>): string {
 
 // Core Composer GET request. The Composer API uses no auth header (unlike Nova/Wingo).
 async function composerRequest(self: ModuleInstance, npIndex: number, context: string, url: string): Promise<void> {
-	console.log(`${context} GET URL:`, url)
-
-	try {
-		const response = await got.get(url, { throwHttpErrors: true })
-		self.log('info', `${context}: NP ${npIndex} responded ${response.statusCode}`)
-	} catch (err) {
-		self.log('error', `${context} request failed: ${err instanceof Error ? err.message : String(err)}`)
-	}
+	self.log('debug', `${context}: NP ${npIndex} dispatching request`)
+	await performRequest(self, context, { method: 'GET', url })
 }
 
 // Composer connector trigger: GET …/api/connector/trigger?name=<name>[&key=value...].
@@ -161,24 +259,15 @@ export async function wolfpackSelector(self: ModuleInstance, nppIndex: number, n
 		return
 	}
 
+	const context = 'Wolfpack'
 	const url = withScheme(npp.nova.url)
 	const body = {
 		command: 'neoprodplatsNPP.ps1',
 		args: ['-config', np.svtLabel],
 	}
 
-	console.log('Wolfpack POST URL:', url)
-	console.log('Wolfpack POST body:', JSON.stringify(body))
-
-	try {
-		const response = await got.post(url, {
-			json: body,
-			headers: authHeaders(self),
-		})
-		self.log('info', `Wolfpack: NPP ${nppIndex} -> ${np.svtLabel} responded ${response.statusCode}`)
-	} catch (err) {
-		self.log('error', `Wolfpack request failed: ${err instanceof Error ? err.message : String(err)}`)
-	}
+	self.log('debug', `${context}: NPP ${nppIndex} → NP ${npIndex} (${np.svtLabel}) selecting config`)
+	await performRequest(self, context, { method: 'POST', url, headers: authHeaders(self), json: body })
 }
 
 // Nova Window Load NeoCom: load a NeoCom production into a given window of the NPP's NOVA endpoint.
@@ -206,26 +295,17 @@ export async function novaWindowLoadNeocom(
 		return
 	}
 
+	const context = 'Nova Window Load NeoCom'
 	const url = joinUrl(withScheme(npp.nova.url), `window/window_${window}/load`)
 	const body = {
 		url: `${joinUrl(model.general.neocomBaseUrl, np.neocomProdId)}/line/2?companion=ws://127.0.0.1:12345`,
 	}
 
-	console.log('Nova Window Load NeoCom POST URL:', url)
-	console.log('Nova Window Load NeoCom POST body:', JSON.stringify(body))
-
-	try {
-		const response = await got.post(url, {
-			json: body,
-			headers: authHeaders(self),
-		})
-		self.log(
-			'info',
-			`Nova Window Load NeoCom: NPP ${nppIndex} window ${window} -> ${np.svtLabel} (prod ${np.neocomProdId}) responded ${response.statusCode}`,
-		)
-	} catch (err) {
-		self.log('error', `Nova Window Load NeoCom request failed: ${err instanceof Error ? err.message : String(err)}`)
-	}
+	self.log(
+		'debug',
+		`${context}: NPP ${nppIndex} window ${window} → NP ${npIndex} (${np.svtLabel}, prod ${np.neocomProdId})`,
+	)
+	await performRequest(self, context, { method: 'POST', url, headers: authHeaders(self), json: body })
 }
 
 // Window Delete: delete a window on the NPP's Nova or Neo endpoint.
@@ -240,20 +320,9 @@ export async function windowDelete(
 	if (!base) return
 
 	const url = joinUrl(base, `window/window_${windowIndex}`)
-	const body = {}
 
-	console.log(`${context} URL:`, url)
-	console.log(`${context} body:`, JSON.stringify(body))
-
-	try {
-		const response = await got.delete(url, {
-			json: body,
-			headers: authHeaders(self),
-		})
-		self.log('info', `${context}: NPP ${nppIndex} window ${windowIndex} responded ${response.statusCode}`)
-	} catch (err) {
-		self.log('error', `${context} request failed: ${err instanceof Error ? err.message : String(err)}`)
-	}
+	self.log('debug', `${context}: NPP ${nppIndex} deleting window ${windowIndex}`)
+	await performRequest(self, context, { method: 'DELETE', url, headers: authHeaders(self), json: {} })
 }
 
 export interface WindowCreateOptions {
@@ -286,18 +355,8 @@ export async function windowCreate(
 		fullscreenMode: options.fullscreenMode,
 	}
 
-	console.log(`${context} URL:`, url)
-	console.log(`${context} body:`, JSON.stringify(body))
-
-	try {
-		const response = await got.post(url, {
-			json: body,
-			headers: authHeaders(self),
-		})
-		self.log('info', `${context}: NPP ${nppIndex} responded ${response.statusCode}`)
-	} catch (err) {
-		self.log('error', `${context} request failed: ${err instanceof Error ? err.message : String(err)}`)
-	}
+	self.log('debug', `${context}: NPP ${nppIndex} creating window`)
+	await performRequest(self, context, { method: 'POST', url, headers: authHeaders(self), json: body })
 }
 
 // Window Load URL: load an arbitrary URL into a given window of the NPP's Nova or Neo endpoint.
@@ -315,16 +374,6 @@ export async function windowLoadUrl(
 	const url = joinUrl(base, `window/window_${windowIndex}/load`)
 	const body = { url: loadUrl }
 
-	console.log(`${context} URL:`, url)
-	console.log(`${context} body:`, JSON.stringify(body))
-
-	try {
-		const response = await got.post(url, {
-			json: body,
-			headers: authHeaders(self),
-		})
-		self.log('info', `${context}: NPP ${nppIndex} window ${windowIndex} responded ${response.statusCode}`)
-	} catch (err) {
-		self.log('error', `${context} request failed: ${err instanceof Error ? err.message : String(err)}`)
-	}
+	self.log('debug', `${context}: NPP ${nppIndex} window ${windowIndex} loading ${loadUrl}`)
+	await performRequest(self, context, { method: 'POST', url, headers: authHeaders(self), json: body })
 }
