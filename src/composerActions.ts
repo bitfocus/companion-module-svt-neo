@@ -1,4 +1,4 @@
-import type { CompanionActionDefinitions, DropdownChoice } from '@companion-module/base'
+import type { CompanionActionDefinitions, DropdownChoice, SomeCompanionActionInputField } from '@companion-module/base'
 import type { ModuleInstance } from './main.js'
 import { composerRaw, composerScript, composerTrigger } from './http.js'
 
@@ -34,24 +34,35 @@ const AUDIO_DELAY_CHOICES: DropdownChoice[] = [
 	{ id: '4000', label: '4000 ms' },
 ]
 
-// Builds the shared NP dropdown option (fresh object per action).
-function npOption(choices: DropdownChoice[], def: string | number) {
+// NP selector as a number input. Enter the NP number directly: 1 means NP01, 2 means NP02, etc.
+// (not zero-padded).
+function npNumberOption(): SomeCompanionActionInputField {
 	return {
 		id: 'np',
-		type: 'dropdown' as const,
+		type: 'number',
+		label: 'NP (1 = NP01)',
+		default: 1,
+		min: 1,
+		max: 200,
+	}
+}
+
+// NP selector as a dropdown, limited to the configured NP units.
+function npDropdownOption(choices: DropdownChoice[], def: string | number): SomeCompanionActionInputField {
+	return {
+		id: 'np',
+		type: 'dropdown',
 		label: 'NP',
 		default: def,
 		choices,
 	}
 }
 
-export function buildComposerActions(
+// Build the full set of composer actions, using the supplied factory for the NP selector option.
+function buildComposerActionSet(
 	self: ModuleInstance,
-	npChoices: DropdownChoice[],
-	npDefault: string | number,
+	np: () => SomeCompanionActionInputField,
 ): CompanionActionDefinitions {
-	const np = () => npOption(npChoices, npDefault)
-
 	return {
 		composer_transition: {
 			name: 'Composer: Transition',
@@ -453,4 +464,23 @@ export function buildComposerActions(
 			},
 		},
 	}
+}
+
+// Public entry: expose every composer action twice — once with a numeric NP input (the default,
+// "1" = NP01) and once with an identical "(Dropdown NP)" variant whose NP selector is a dropdown
+// limited to the configured NP units. The callbacks are identical; only the NP option differs.
+export function buildComposerActions(
+	self: ModuleInstance,
+	npChoices: DropdownChoice[],
+	npDefault: string | number,
+): CompanionActionDefinitions {
+	const numberSet = buildComposerActionSet(self, npNumberOption)
+	const dropdownSet = buildComposerActionSet(self, () => npDropdownOption(npChoices, npDefault))
+
+	const actions: CompanionActionDefinitions = { ...numberSet }
+	for (const [id, def] of Object.entries(dropdownSet)) {
+		if (!def) continue
+		actions[`${id}_dropdown_np`] = { ...def, name: `${def.name} (Dropdown NP)` }
+	}
+	return actions
 }
