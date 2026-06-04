@@ -27,7 +27,41 @@ export function UpdateActions(self: ModuleInstance): void {
 	const npChoicesSafe = npChoices.length > 0 ? npChoices : [{ id: 1, label: 'NP01' }]
 	const npDefault = npChoicesSafe[0].id
 
+	// NPP dropdown choices derived from the configured NPP count (NPP01, NPP02, ...).
+	const nppChoices = model.npp.map((unit) => ({ id: unit.index, label: `NPP${String(unit.index).padStart(2, '0')}` }))
+	const nppChoicesSafe = nppChoices.length > 0 ? nppChoices : [{ id: 1, label: 'NPP01' }]
+
 	self.setActionDefinitions({
+		dummy_np: {
+			name: 'Dummy NP Action',
+			options: [
+				{
+					id: 'np',
+					type: 'dropdown',
+					label: 'NP',
+					default: npChoicesSafe[0].id,
+					choices: npChoicesSafe,
+				},
+			],
+			callback: async () => {
+				// Intentionally does nothing.
+			},
+		},
+		dummy_npp: {
+			name: 'Dummy NPP Action',
+			options: [
+				{
+					id: 'npp',
+					type: 'dropdown',
+					label: 'NPP',
+					default: nppChoicesSafe[0].id,
+					choices: nppChoicesSafe,
+				},
+			],
+			callback: async () => {
+				// Intentionally does nothing.
+			},
+		},
 		wolfpack: {
 			name: 'Wolfpack',
 			options: [
