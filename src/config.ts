@@ -1,4 +1,5 @@
 import { type SomeCompanionConfigField } from '@companion-module/base'
+import type { ModuleInstance } from './main.js'
 
 export interface ModuleConfig {
 	nppCount: number
@@ -67,7 +68,7 @@ export function GetConfigFields(config?: ModuleConfig): SomeCompanionConfigField
 		{
 			id: 'satellite_baseurl',
 			type: 'textinput',
-			label: 'Satellite Base URL',
+			label: 'Satellite Base Path',
 			width: 6,
 			default: '/api/',
 		},
@@ -75,7 +76,7 @@ export function GetConfigFields(config?: ModuleConfig): SomeCompanionConfigField
 		{
 			id: 'neo_baseurl',
 			type: 'textinput',
-			label: 'NEO Base URL',
+			label: 'NEO Base Path',
 			width: 6,
 			default: '/',
 		},
@@ -83,7 +84,7 @@ export function GetConfigFields(config?: ModuleConfig): SomeCompanionConfigField
 		{
 			id: 'wingo_baseurl',
 			type: 'textinput',
-			label: 'Wingo Base URL',
+			label: 'Wingo Base Path',
 			width: 6,
 			default: '/',
 		},
@@ -91,7 +92,7 @@ export function GetConfigFields(config?: ModuleConfig): SomeCompanionConfigField
 		{
 			id: 'nova_baseurl',
 			type: 'textinput',
-			label: 'Nova Base URL',
+			label: 'Nova Base Path',
 			width: 6,
 			default: '/',
 		},
@@ -386,4 +387,44 @@ export function GetConfigFields(config?: ModuleConfig): SomeCompanionConfigField
 	}
 
 	return [...configFields]
+}
+
+// Config keys whose values are sensitive and must never be written to the log verbatim.
+const SENSITIVE_CONFIG_KEYS = new Set<string>(['wingo_token'])
+
+// Render a config value for the log: empty values are made obvious and secrets are masked.
+function formatConfigValue(key: string, value: unknown): string {
+	if (value === undefined || value === '') return '(empty)'
+	if (SENSITIVE_CONFIG_KEYS.has(key)) return '***redacted***'
+	return JSON.stringify(value)
+}
+
+// Log one `info` line per config field that actually changed between the previous and new config,
+// followed by a summary. Called from `configUpdated` so the operator gets a clear audit trail of
+// what was edited in the configuration pane (with secrets redacted).
+export function logConfigChanges(self: ModuleInstance, previous: ModuleConfig | undefined, next: ModuleConfig): void {
+	const prev = (previous ?? {}) as unknown as Record<string, unknown>
+	const curr = (next ?? {}) as unknown as Record<string, unknown>
+
+	const keys = [...new Set<string>([...Object.keys(prev), ...Object.keys(curr)])].sort()
+	let changes = 0
+
+	for (const key of keys) {
+		const before = prev[key]
+		const after = curr[key]
+		if (before === after) continue
+
+		self.log(
+			'info',
+			`Config: "${key}" changed from ${formatConfigValue(key, before)} to ${formatConfigValue(key, after)}`,
+		)
+		changes++
+	}
+
+	self.log(
+		'info',
+		changes === 0
+			? 'Config: saved with no value changes'
+			: `Config: ${changes} setting${changes === 1 ? '' : 's'} updated`,
+	)
 }

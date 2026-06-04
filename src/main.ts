@@ -1,5 +1,5 @@
 import { InstanceBase, runEntrypoint, InstanceStatus, SomeCompanionConfigField } from '@companion-module/base'
-import { GetConfigFields, type ModuleConfig } from './config.js'
+import { GetConfigFields, logConfigChanges, type ModuleConfig } from './config.js'
 import { buildModel, type NeoModel } from './model.js'
 import { UpdateVariableDefinitions } from './variables.js'
 import { UpgradeScripts } from './upgrades.js'
@@ -30,6 +30,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 	}
 
 	async configUpdated(config: ModuleConfig): Promise<void> {
+		logConfigChanges(this, this.config, config) // audit which settings changed (before swapping in the new config)
 		this.config = config
 		this.updateActions() // refresh actions (e.g. NP dropdown choices) to match new config
 		this.updateVariableDefinitions() // refresh variables to match new config
